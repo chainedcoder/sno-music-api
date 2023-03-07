@@ -2,6 +2,7 @@ import json
 import js2py
 from flask import Flask
 import pafy
+import os
 from ytmusicapi import YTMusic
 from typing import List, Dict, Union
 
@@ -10,7 +11,13 @@ eval_res, jsFile = js2py.run_file("yt_decipher.js")
 
 
 # ytmusic = YTMusic('headers_auth.json')
-ytmusic = YTMusic("headers_auth.json")
+headers_auth_path = "/etc/secrets/headers_auth.json"
+if not os.path.exists(headers_auth_path):
+    headers_auth_path = "headers_auth.json"
+    if not os.path.exists(headers_auth_path):
+        raise Exception("headers_auth.json not found")
+
+ytmusic = YTMusic(headers_auth_path)
 
 ## ++++++++++++  SEARCH ++++++++++++
 ## +++++++++++++++++++++++++++++++++
