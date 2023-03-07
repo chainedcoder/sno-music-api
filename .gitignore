@@ -10,3 +10,6 @@ venv*/
 *.egg-info/
 .env
 .env/
+.DS_Store
+.AppleDouble
+.LSOverride
