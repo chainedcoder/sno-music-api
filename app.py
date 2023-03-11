@@ -72,8 +72,8 @@ def run_command(command: str, shell=True, stdout=subprocess.PIPE) -> Tuple[int, 
     return (0, out.getvalue())
 
 
-run_command("mkdir -p /videos/hls")
-run_command("mkdir -p /videos/in")
+run_command("mkdir -p videos/hls")
+run_command("mkdir -p videos/in")
 
 ## ++++++++  OBTAIN HEADER +++++++++
 ## +++++++++++++++++++++++++++++++++
