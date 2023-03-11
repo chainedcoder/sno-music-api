@@ -15,6 +15,7 @@ MarkupSafe==2.0.1
 mutagen==1.46.0
 pycryptodomex==3.17
 pyjsparser==2.7.1
+python-dotenv==1.0.0
 pytz-deprecation-shim==0.1.0.post0
 requests==2.26.0
 six==1.16.0

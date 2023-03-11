@@ -6,10 +6,15 @@ import yt_dlp
 import os
 from ytmusicapi import YTMusic
 from typing import List, Dict, Union
-
 import subprocess
-
 from os import environ
+import sys
+import selectors
+import io
+from typing import Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 HOST = environ.get("HOST")
 
@@ -25,6 +30,47 @@ if not os.path.exists(headers_auth_path):
         raise Exception("headers_auth.json not found")
 
 ytmusic = YTMusic(headers_auth_path)
+
+
+def run_command(command: str, shell=True, stdout=subprocess.PIPE) -> Tuple[int, str]:
+
+    proc = subprocess.Popen(command, shell=shell, stdout=stdout, stderr=subprocess.PIPE)
+
+    sel = selectors.DefaultSelector()
+    for fobj in [proc.stdout, proc.stderr]:
+        os.set_blocking(fobj.fileno(), False)
+        sel.register(fobj, selectors.EVENT_READ)
+
+    out = io.StringIO()
+    err = io.StringIO()
+
+    # loop until all descriptors removed
+    while len(sel.get_map()) > 0:
+        events = sel.select()
+        if len(events) == 0:
+            # timeout or signal, kill to prevent wait hanging
+            proc.terminate()
+            break
+        for key, _ in events:
+            # read all available data
+            buf = key.fileobj.read().decode(errors="ignore")
+            if buf == "":
+                sel.unregister(key.fileobj)
+            elif key.fileobj == proc.stdout:
+                sys.stdout.write(buf)
+                sys.stdout.flush()
+                out.write(buf)
+            elif key.fileobj == proc.stderr:
+                sys.stderr.write(buf)
+                sys.stderr.flush()
+                err.write(buf)
+
+    sel.close()
+    proc.wait()
+    if proc.returncode != 0:
+        return (proc.returncode, err.getvalue())
+    return (0, out.getvalue())
+
 
 ## ++++++++  OBTAIN HEADER +++++++++
 ## +++++++++++++++++++++++++++++++++
@@ -180,7 +226,14 @@ def get_stream_url(video_id):
     # Check if videos/hls/{video_id}.m3u8 exists and skip if it does
     if not os.path.exists(f"videos/hls/{video_id}.m3u8"):
         command = f"ffmpeg -y -i 'videos/in/{video_id}.m4a' -c:a aac -b:a 128k -muxdelay 0 -f segment -sc_threshold 0 -segment_time 7 -segment_list 'videos/hls/{video_id}.m3u8' -segment_format mpegts 'videos/hls/{video_id}-%d.m4a'"
-        subprocess.Popen(command, shell=True)
+        process = run_command(command, shell=True, stdout=subprocess.PIPE)
+
+        # while True:
+        #     output = process.stdout.readline()
+        #     if output == "" and process.poll() is not None:
+        #         break
+        #     if output:
+        #         print(output.strip())
 
     result = {
         "videoId": video_id,
