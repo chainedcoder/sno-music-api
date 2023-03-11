@@ -234,6 +234,8 @@ def get_stream_url(video_id):
         #         break
         #     if output:
         #         print(output.strip())
+    run_command("ls -l videos/hls")
+    run_command("ls -l videos/in")
 
     result = {
         "videoId": video_id,
