@@ -1,10 +1,18 @@
 import json
+import m3u8
 import js2py
-from flask import Flask
-import pafy
+import subprocess
+from flask import Flask, request, jsonify, Response, send_file, send_from_directory
+import yt_dlp
 import os
 from ytmusicapi import YTMusic
 from typing import List, Dict, Union
+
+import subprocess
+
+from os import environ
+
+HOST = environ.get("HOST")
 
 app = Flask(__name__)
 eval_res, jsFile = js2py.run_file("yt_decipher.js")
@@ -18,6 +26,19 @@ if not os.path.exists(headers_auth_path):
         raise Exception("headers_auth.json not found")
 
 ytmusic = YTMusic(headers_auth_path)
+
+## ++++++++  OBTAIN HEADER +++++++++
+## +++++++++++++++++++++++++++++++++
+@app.route("/headers/", methods=["POST"])
+def headers_auth():
+    # get raw_header from posted data
+    raw_header = request.form.get("raw_header")
+    headers_to_paste_in_headers_auth_file = YTMusic.setup(
+        filepath=headers_auth_path,
+        headers_raw=raw_header,  # raw value of headers copying from chrom -> look for browse? and copy headers from accept: */* to the end of section
+    )
+    return headers_to_paste_in_headers_auth_file
+
 
 ## ++++++++++++  SEARCH ++++++++++++
 ## +++++++++++++++++++++++++++++++++
@@ -45,10 +66,8 @@ def search_album(album):
     return albums
 
 
-## ++++++++++++++  GET +++++++++++++
+## ++++++++++  GET ARTIST ++++++++++
 ## +++++++++++++++++++++++++++++++++
-
-
 @app.route("/artist/get/<artist_id>/")
 def get_artist(artist_id):
     artist = ytmusic.get_artist(artist_id)
@@ -74,7 +93,7 @@ def get_lyrics(browse_id):
 
 
 def getAudios(songData):
-    print(songData)
+    # print(songData)
     adpt_streams = songData["streamingData"]["adaptiveFormats"]
     sort_order = {
         258: 0,
@@ -126,23 +145,69 @@ def getAudios(songData):
 
 @app.route("/get_stream/<video_id>/")
 def get_stream_url(video_id):
+    if video_id == "--" or not video_id:
+        return json.dumps({"error": "video_id is empty"})
 
     url = "https://www.youtube.com/watch?v=" + video_id
     # video = pafy.new(url)
     # streamURL = video.getbestaudio().url
-    # print(video.getbestaudio().url)
 
-    song = ytmusic.get_song(videoId=video_id)
-    # print("********", getAudios(song))
-    # best_audio = getAudios(song)[1]
-    # ba_signature_cipher = best_audio["signatureCipher"]
-    # streamURL = jsFile.decipher(ba_signature_cipher)
-    # print(streamURL)
-    return song  # getAudios(song)
+    ydl_opts = {
+        "format": "m4a/bestaudio/best",
+        "outtmpl": f"videos/in/{video_id}.%(ext)s",
+        "overwrites": True,
+        "postprocessors": [
+            # {
+            #     "key" : "FFmpegVideoConvertor",
+            #     "preferedformat" : "mp4",
+            # },
+            # {
+            #     'key':'FFmpegMetadata',
+            #     'add_metadata': True,
+            # },
+            # {
+            #     "key": "Exec",
+            #     "exec_cmd": f'cp videos/in/{video_id}.m4a videos/in/{video_id}_tmp.m4a && ffmpeg -y -i "videos/in/{video_id}_tmp.m4a" -c:a aac -b:a 128k -muxdelay 0 -f segment -sc_threshold 0 -segment_time 7 -segment_list "videos/hls/{video_id}.m3u8" -segment_format mpegts "videos/hls/{video_id}-%d.m4a" && rm videos/in/{video_id}_tmp.m4a ',
+            # },
+        ],
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ## check if videos/in/{video_id}.m4a exists and skip if it does
+        download = False
+        if not os.path.exists(f"videos/in/{video_id}.m4a"):
+            download = True
+        song_info = ydl.extract_info(url, download=download)
 
-    # other_detail = song["microformat"]["microformatDataRenderer"]["videoDetails"]
-    # result = { "videoId": video_id, "streamURL": streamURL, "duration": other_detail["durationSeconds"]  }
-    # return result
+    # Check if videos/hls/{video_id}.m3u8 exists and skip if it does
+    if not os.path.exists(f"videos/hls/{video_id}.m3u8"):
+        command = f"ffmpeg -y -i 'videos/in/{video_id}.m4a' -c:a aac -b:a 128k -muxdelay 0 -f segment -sc_threshold 0 -segment_time 7 -segment_list 'videos/hls/{video_id}.m3u8' -segment_format mpegts 'videos/hls/{video_id}-%d.m4a'"
+        subprocess.Popen(command, shell=True)
+
+    result = {
+        "videoId": video_id,
+        "streamURL": f"{HOST}/stream/{video_id}",
+        "duration": str(song_info["duration"]),
+        "durationString": song_info["duration_string"],
+    }
+    print(result)
+
+    return jsonify([result])
+
+
+@app.route("/stream/<stream_id>/")
+def stream(stream_id):
+    print("Stream: ", stream_id)
+    return send_from_directory(
+        directory="videos/hls",
+        path=f"{stream_id}.m3u8",
+        mimetype="application/x-mpegURL",
+    )
+
+
+@app.route("/stream/<stream_id>/<path:path>")
+def video(stream_id, path):
+    print("Stream: ", stream_id)
+    return send_from_directory(directory="videos/hls", path=path)
 
 
 @app.route("/")
@@ -150,92 +215,8 @@ def get_stream_url(video_id):
 def get_mood_categories():
     # items =[ ]
     # for group in ytmusic.get_mood_categories()["For you"]
-
-    return json.dumps(
-        [
-            {
-                "For you": [
-                    {"params": "ggMPOg1uX2NpRFNoSVRjRElQ", "title": "African"},
-                    {"params": "ggMPOg1uX2J1MDVJbDZxM2tO", "title": "Pop"},
-                    {"params": "ggMPOg1uX3IxSk5vQWhUWUdR", "title": "Romance"},
-                    {"params": "ggMPOg1uX2JxQ2hxc2J5UFhR", "title": "R&B & Soul"},
-                    {"params": "ggMPOg1uX3ROaWVGeFdVRmdV", "title": "2010s"},
-                    {
-                        "params": "ggMPOg1uXzJxenpkRkNOMk1y",
-                        "title": "Black Lives Matter",
-                    },
-                ],
-                "Genres": [
-                    {"params": "ggMPOg1uX2NpRFNoSVRjRElQ", "title": "African"},
-                    {"params": "ggMPOg1uX0JFbU9QNXBBWldQ", "title": "Arabic"},
-                    {"params": "ggMPOg1uX3pDQ1ZXWVB5SWE1", "title": "Blues"},
-                    {
-                        "params": "ggMPOg1uX2hacTRJOU5KcndD",
-                        "title": "Bollywood & Indian",
-                    },
-                    {"params": "ggMPOg1uX3Vmb2NXbUdLcHNU", "title": "Brazilian"},
-                    {
-                        "params": "ggMPOg1uX3E1VnpSRHhLVElG",
-                        "title": "Christian & Gospel",
-                    },
-                    {"params": "ggMPOg1uXzhnOElUNm9TY21k", "title": "Classical"},
-                    {
-                        "params": "ggMPOg1uX0Y2bGpHeHhUUEtH",
-                        "title": "Country & Americana",
-                    },
-                    {
-                        "params": "ggMPOg1uXzVLbmZnaWI4STNs",
-                        "title": "Dance & Electronic",
-                    },
-                    {"params": "ggMPOg1uX3NjZllsNGVEMkZo", "title": "Decades"},
-                    {"params": "ggMPOg1uXzMyY3J2SGM0bVh5", "title": "Family"},
-                    {"params": "ggMPOg1uXzBTRFBmQ3N4b0R6", "title": "Folk & Acoustic"},
-                    {"params": "ggMPOg1uX2E4aVJuU05GOVQ0", "title": "Hip-Hop"},
-                    {
-                        "params": "ggMPOg1uX21NWWpBbU01SDgy",
-                        "title": "Indie & Alternative",
-                    },
-                    {"params": "ggMPOg1uXzAwSjVITDBZckJR", "title": "J-Pop"},
-                    {"params": "ggMPOg1uX3FJMlE0aDZWQWg5", "title": "Jazz"},
-                    {"params": "ggMPOg1uX0JrbjBDOFFPSzJW", "title": "K-Pop"},
-                    {"params": "ggMPOg1uX29wWTRjMHV1dWN5", "title": "Latin"},
-                    {
-                        "params": "ggMPOg1uX2hXVUQwc0JTNXlE",
-                        "title": "Mandopop & Cantopop",
-                    },
-                    {"params": "ggMPOg1uXzdlSXhKZ0hMV1Z4", "title": "Metal"},
-                    {"params": "ggMPOg1uX2J1MDVJbDZxM2tO", "title": "Pop"},
-                    {"params": "ggMPOg1uX2JxQ2hxc2J5UFhR", "title": "R&B & Soul"},
-                    {
-                        "params": "ggMPOg1uX1lWbmVRNkFIa0k0",
-                        "title": "Reggae & Caribbean",
-                    },
-                    {"params": "ggMPOg1uXzJKTm5jUEZ5Uzlu", "title": "Rock"},
-                    {
-                        "params": "ggMPOg1uX2tDYW42Z0F0blRl",
-                        "title": "Soundtracks & Musicals",
-                    },
-                ],
-                "Moods & moments": [
-                    {
-                        "params": "ggMPOg1uXzJxenpkRkNOMk1y",
-                        "title": "Black Lives Matter",
-                    },
-                    {"params": "ggMPOg1uXzVuc0dnZlhpV3Ba", "title": "Chill"},
-                    {"params": "ggMPOg1uX2ozUHlwbWM3ajNq", "title": "Commute"},
-                    {"params": "ggMPOg1uX1NhQU5LVGdGTkdo", "title": "Energy Boosters"},
-                    {"params": "ggMPOg1uXzZQbDB5eThLRTQ3", "title": "Feel Good"},
-                    {"params": "ggMPOg1uX1JNQmpISHRnczVF", "title": "Focus"},
-                    {"params": "ggMPOg1uXzQ2UUV2Um13S3Jn", "title": "Holiday"},
-                    {"params": "ggMPOg1uXzRJcVprRXdGMzVz", "title": "Party"},
-                    {"params": "ggMPOg1uX1YzRjl4a2NKajkx", "title": "Pride"},
-                    {"params": "ggMPOg1uX3IxSk5vQWhUWUdR", "title": "Romance"},
-                    {"params": "ggMPOg1uX1AyU0U4UnRYVXpv", "title": "Sleep"},
-                    {"params": "ggMPOg1uXzhZNkhXNUlFb3pV", "title": "Workout"},
-                ],
-            }
-        ]
-    )
+    # print("***", ytmusic.get_mood_categories())
+    return json.dumps([ytmusic.get_mood_categories()])
 
 
 @app.route("/mood/<mood_key>/")
@@ -244,10 +225,9 @@ def get_mood_playlists(mood_key):
     mood_key is `param` retrieved from get_mood_categories --> /mood/
     """
     print(mood_key)
+    # print(ytmusic.get_mood_playlists(params=mood_key))
 
-    return json.dumps(
-        ytmusic.get_mood_playlists(params=mood_key)
-    )  # json.dumps(ytmusic.get_mood_playlists(params=mood_key))
+    return json.dumps(ytmusic.get_mood_playlists(params=mood_key))
 
 
 @app.route("/mood/<mood_key>/all/")
@@ -256,7 +236,7 @@ def get_mood_playlists_all_songs(mood_key):
     mood_key is `param` retrieved from get_mood_categories --> /mood/
     """
     all_songs = []
-    print("ALL songs")
+    print("ALL songs at mood_key:", mood_key)
     playlists = ytmusic.get_mood_playlists(params=mood_key)[:2]
     for playlist in playlists:
         all_songs += ytmusic.get_playlist(playlist["playlistId"])["tracks"]
