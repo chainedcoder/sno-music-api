@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-HOST = environ.get("HOST")
+HOST = os.getenv("HOST")
 
 app = Flask(__name__)
 eval_res, jsFile = js2py.run_file("yt_decipher.js")
