@@ -1,5 +1,4 @@
 import json
-import m3u8
 import js2py
 import subprocess
 from flask import Flask, request, jsonify, Response, send_file, send_from_directory
